@@ -247,6 +247,12 @@ def extract_dual_json_from_image(image_path: str, api_key: str = None, model: st
     for key in EXPECTED_KEYS:
         validation_results[key] = validate_field(pdf_extracted[key], ocr_extracted[key], key)
 
+    # Additional feature: Calculate Claim Liability based on OCR values (PCT & MBA)
+    calc_liability = compute_calculated_claim_liability(ocr_extracted)
+    if calc_liability:
+        ocr_extracted["calculated_claim_liability"] = calc_liability
+        validation_results["calculated_claim_liability"] = "Calculated"
+
     # Track token usage and compute per-case cost
     case_basename = os.path.splitext(os.path.basename(image_path))[0]
     token_usage_info = {}
@@ -263,6 +269,37 @@ def extract_dual_json_from_image(image_path: str, api_key: str = None, model: st
         "validation": validation_results,
         "token_usage": token_usage_info
     }
+
+
+def compute_calculated_claim_liability(ocr_data: Dict[str, str]) -> str:
+    """
+    Calculates Claim Liability based on OCR values:
+    If OCR PCT == 100% -> $19,890.00
+    If OCR PCT < 100%  -> (OCR MBA * OCR PCT) / 100
+    """
+    pct_val = ocr_data.get("claim_liability_percentage", "")
+    mba_val = ocr_data.get("claim_liability_base_amount", "")
+
+    if not pct_val or not mba_val:
+        return ""
+
+    try:
+        pct_clean = re.sub(r"[^\d.]", "", str(pct_val))
+        mba_clean = re.sub(r"[^\d.]", "", str(mba_val))
+
+        if not pct_clean or not mba_clean:
+            return ""
+
+        pct = float(pct_clean)
+        mba = float(mba_clean)
+
+        if pct >= 100.0:
+            return "19890.00"
+        else:
+            calc_val = (mba * pct) / 100.0
+            return f"{calc_val:.2f}"
+    except Exception:
+        return ""
 
 
 # ==========================================
@@ -333,6 +370,26 @@ def export_to_excel(extracted_data: Dict[str, Any], output_excel_path: str):
 
         for col_i in range(1, 6):
             c = ws.cell(row=idx, column=col_i)
+            c.border = thin_border
+            c.alignment = Alignment(vertical="center")
+
+    # Write additional calculated_claim_liability row if present
+    if "calculated_claim_liability" in ocr_data:
+        calc_row = len(EXPECTED_KEYS) + 2
+        calc_key = "calculated_claim_liability"
+        calc_val = ocr_data.get(calc_key, "")
+
+        ws.cell(row=calc_row, column=1, value=calc_key).font = bold_font
+        ws.cell(row=calc_row, column=2, value="").font = normal_font
+        ws.cell(row=calc_row, column=3, value=calc_key).font = bold_font
+        ws.cell(row=calc_row, column=4, value=calc_val).font = normal_font
+
+        val_cell = ws.cell(row=calc_row, column=5, value="Calculated")
+        val_cell.fill = match_fill
+        val_cell.font = match_font
+
+        for col_i in range(1, 6):
+            c = ws.cell(row=calc_row, column=col_i)
             c.border = thin_border
             c.alignment = Alignment(vertical="center")
 
