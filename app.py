@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from main import process_screenshot_file, EXPECTED_KEYS
 from token_monitor import get_cumulative_metrics
+from claim_dual_extractor import process_claim_file
 
 app = FastAPI(
     title="Unemployment Claim Extraction & Validation API",
@@ -41,6 +42,10 @@ class PathExtractionRequest(BaseModel):
 
 class FolderBatchRequest(BaseModel):
     folder_path: str
+    output_dir: Optional[str] = None
+
+class PdfPathExtractionRequest(BaseModel):
+    pdf_path: str
     output_dir: Optional[str] = None
 
 
@@ -158,6 +163,76 @@ def batch_extract_folder(req: FolderBatchRequest):
     }
 
 
+@app.post(
+    "/api/extract-claim-pdf",
+    summary="Upload & Process Unemployment Claim PDF",
+    tags=["PDF Extraction & Validation"]
+)
+async def extract_claim_pdf_file(
+    file: UploadFile = File(..., description="Unemployment Claim PDF document file (.pdf)"),
+    output_dir: Optional[str] = None
+):
+    """
+    **Upload an Unemployment Claim PDF document file**.
+    - Converts PDF pages to high-resolution images & extracts text using GPT Vision.
+    - Runs Dual Engine Validation (Regex + LLM) page-by-page.
+    - Outputs extracted JSON data, Audit Log, and Excel validation spreadsheet.
+    - Returns JSON response with extracted data and direct download links for both JSON and Excel files.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files (.pdf) are supported.")
+
+    temp_dir = tempfile.mkdtemp()
+    temp_pdf_path = os.path.join(temp_dir, file.filename)
+
+    try:
+        with open(temp_pdf_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        case_name = os.path.splitext(file.filename)[0]
+        target_out_dir = output_dir or os.path.join("output", case_name)
+
+        result = process_claim_file(temp_pdf_path, output_dir=target_out_dir)
+
+        result["case_name"] = case_name
+        result["excel_download_url"] = f"/api/download-excel/{case_name}"
+        result["json_download_url"] = f"/api/download-json/{case_name}"
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@app.post(
+    "/api/extract-claim-pdf-path",
+    summary="Process Unemployment Claim PDF by Local File Path",
+    tags=["PDF Extraction & Validation"]
+)
+def extract_claim_pdf_by_path(req: PdfPathExtractionRequest):
+    """Process an Unemployment Claim PDF document by specifying its local file path."""
+    abs_path = os.path.abspath(req.pdf_path)
+    if not os.path.exists(abs_path):
+        raise HTTPException(status_code=404, detail=f"File not found at path: {abs_path}")
+
+    if not abs_path.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files (.pdf) are supported.")
+
+    try:
+        case_name = os.path.splitext(os.path.basename(abs_path))[0]
+        target_out_dir = req.output_dir or os.path.join("output", case_name)
+
+        result = process_claim_file(abs_path, output_dir=target_out_dir)
+        result["case_name"] = case_name
+        result["excel_download_url"] = f"/api/download-excel/{case_name}"
+        result["json_download_url"] = f"/api/download-json/{case_name}"
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get(
     "/api/token-metrics",
     summary="Get Token Consumption & USD Cost Metrics",
@@ -192,6 +267,29 @@ def download_excel(case_name: str):
             )
 
     raise HTTPException(status_code=404, detail=f"Excel validation report not found for case: '{case_name}'")
+
+
+@app.get(
+    "/api/download-json/{case_name}",
+    summary="Download Extracted JSON Report",
+    tags=["Reports"]
+)
+def download_json(case_name: str):
+    """Downloads the generated JSON extraction report (.json) for a case."""
+    possible_paths = [
+        os.path.join("output", case_name, f"{case_name}.json"),
+        os.path.join("Unemployment Claims - Automation Project", "output", case_name, f"{case_name}.json")
+    ]
+
+    for json_path in possible_paths:
+        if os.path.exists(json_path):
+            return FileResponse(
+                path=json_path,
+                filename=os.path.basename(json_path),
+                media_type="application/json"
+            )
+
+    raise HTTPException(status_code=404, detail=f"JSON extraction report not found for case: '{case_name}'")
 
 
 if __name__ == "__main__":

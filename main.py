@@ -179,8 +179,8 @@ def extract_dual_json_from_image(image_path: str, api_key: str = None, model: st
         " - claim_mailing_date\n"
         " - claim_liability_percentage (Look under PCT header in Image 1 PDF, e.g. 1.608 or 8.852; look in % of $ box in Image 2 OCR UI, e.g. 1.61 or 8.85)\n"
         " - claim_liability_base_amount\n"
-        " - agency_address_line_1 (Look at the Agency / Local Office address section at the bottom of the notice, e.g. 830 PUNCHBOWL #324)\n"
-        " - agency_address_line_2 (e.g. HONOLULU, HI 96813-5080)\n"
+        " - agency_address_line_1 (Look up claimant's ISL number in table row, then dynamically extract matching street address from CLAIMS OFFICE section at bottom of Image 1 notice, e.g. for ISL 4 -> 4370 KUKUI GROVE ST, STE 3-214)\n"
+        " - agency_address_line_2 (Dynamically extract city, state, zip matching that ISL number from CLAIMS OFFICE section at bottom of Image 1 notice, e.g. for ISL 4 -> LIHUE, HI 96766)\n"
         " - separation_code (e.g. B or 6 - DISCHARGED NO MISCONDUCT)\n\n"
         "CRITICAL OCR ACCURACY RULES:\n"
         "1. Inspect low-resolution dot-matrix text and cyan/blue-highlighted boxes in Image 1 with extreme pixel care.\n"
@@ -256,9 +256,27 @@ def extract_dual_json_from_image(image_path: str, api_key: str = None, model: st
     # Track token usage and compute per-case cost
     case_basename = os.path.splitext(os.path.basename(image_path))[0]
     token_usage_info = {}
+    usage_obj = getattr(response, "usage", None)
+
+    # 1. Platform Universal Token Monitor (updates the Token Utilization dashboard)
     try:
+        from core.universal_token_monitor import track_usage as track_universal_usage
+        track_universal_usage(
+            response_usage=usage_obj,
+            model=selected_model,
+            poc_name="BASE-CLAIM",
+            file_name=case_basename,
+            step_name="dual_vision_extraction"
+        )
+    except Exception:
+        pass
+
+    # 2. Local POC Token Monitor
+    try:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
         from token_monitor import track_usage
-        usage_obj = getattr(response, "usage", None)
         token_usage_info = track_usage(usage_obj, model=selected_model, case_name=case_basename)
     except Exception as err:
         print(f"Warning: Could not track token usage: {err}")
