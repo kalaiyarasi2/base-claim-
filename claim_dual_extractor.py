@@ -2,12 +2,19 @@ import os
 import re
 import sys
 import json
+from pathlib import Path
 from typing import Dict, Any, Tuple
 from dotenv import load_dotenv
 from openai import OpenAI
 
+BASE_DIR = Path(__file__).parent.resolve()
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 # Load environment variables from .env file automatically
 load_dotenv()
+
+from pdf_vision_extractor import extract_pdf_to_txt_vision
 
 
 EXPECTED_KEYS = [
@@ -380,32 +387,13 @@ def dual_validate_and_merge(
 
 def save_data_to_excel(all_page_results: list[Dict[str, str]], all_audit_logs: list[Dict[str, Any]], excel_path: str):
     """
-    Saves extracted list of JSON data objects and validation audit logs to an Excel workbook (.xlsx).
-    Each page/claimant forms a row in Sheet 1 ('Extracted Data').
+    Saves extracted list of JSON data objects to an Excel workbook (.xlsx).
+    Each page/claimant forms a row in 'Extracted Data'.
     """
     import pandas as pd
 
-    # Sheet 1: Main Extracted Data Table (Multi-row, 1 row per page/claimant)
     df_data = pd.DataFrame(all_page_results)
-
-    # Sheet 2: Field Audit Log & Confidence Scores across pages
-    audit_rows = []
-    for page_idx, audit_log in enumerate(all_audit_logs):
-        for key, info in audit_log.items():
-            audit_rows.append({
-                "Page Number": page_idx + 1,
-                "Field Name": key,
-                "Regex Extracted Value": info.get("regex_val", ""),
-                "LLM Extracted Value": info.get("llm_val", ""),
-                "Final Merged Value": info.get("final_val", ""),
-                "Validation Status": info.get("status", ""),
-                "Confidence Score": info.get("confidence", 0.0)
-            })
-    df_audit = pd.DataFrame(audit_rows)
-
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        df_data.to_excel(writer, sheet_name="Extracted Data", index=False)
-        df_audit.to_excel(writer, sheet_name="Validation Audit", index=False)
+    df_data.to_excel(excel_path, sheet_name="Extracted Data", index=False)
 
 
 # ==========================================
@@ -440,7 +428,6 @@ def process_claim_file(
 
     # Step 1: Read / Extract full text (If PDF, render via vision OCR and save .txt)
     if file_path.lower().endswith(".pdf"):
-        from pdf_vision_extractor import extract_pdf_to_txt_vision
         print(f"Converting PDF '{file_path}' using GPT Vision OCR...")
         text_content = extract_pdf_to_txt_vision(file_path, txt_path, api_key=api_key, model="gpt-4o")
     else:
