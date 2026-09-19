@@ -9,10 +9,15 @@ BASE_DIR = Path(__file__).parent.resolve()
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+try:
+    from database.poc_db import log_universal as _log_uni
+except ImportError:
+    _log_uni = None
 
 from main import process_screenshot_file, EXPECTED_KEYS
 from token_monitor import get_cumulative_metrics
@@ -68,6 +73,7 @@ def root():
     tags=["Extraction & Validation"]
 )
 async def extract_screenshot_file(
+    request: Request,
     file: UploadFile = File(..., description="Screenshot image file (.png, .jpg, .jpeg)"),
     output_dir: Optional[str] = None
 ):
@@ -83,6 +89,17 @@ async def extract_screenshot_file(
 
     temp_dir = tempfile.mkdtemp()
     temp_img_path = os.path.join(temp_dir, file.filename)
+    
+    processed_by = request.headers.get("X-User-Email") or request.headers.get("x-user-email") or "SYSTEM"
+    
+    if _log_uni:
+        _log_uni(
+            module="Base Claim Extractor", action="extract",
+            status="STARTED",
+            processed_by=processed_by,
+            file_name=file.filename,
+            details="Starting screenshot extraction"
+        )
 
     try:
         with open(temp_img_path, "wb") as buffer:
@@ -95,9 +112,26 @@ async def extract_screenshot_file(
         case_name = os.path.splitext(file.filename)[0]
         result["excel_download_url"] = f"/api/download-excel/{case_name}"
 
+        if _log_uni:
+            _log_uni(
+                module="Base Claim Extractor", action="extract",
+                status="SUCCESS",
+                processed_by=processed_by,
+                file_name=file.filename,
+                details="Screenshot extracted and validated successfully"
+            )
+
         return JSONResponse(content=result)
 
     except Exception as e:
+        if _log_uni:
+            _log_uni(
+                module="Base Claim Extractor", action="extract",
+                status="FAILED",
+                processed_by=processed_by,
+                file_name=file.filename,
+                details=f"Error: {str(e)}"
+            )
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Clean up temporary upload copy
@@ -176,7 +210,8 @@ def batch_extract_folder(req: FolderBatchRequest):
     tags=["PDF Extraction & Validation"]
 )
 async def extract_claim_pdf_file(
-    file: UploadFile = File(..., description="Unemployment Claim PDF document file (.pdf)"),
+    request: Request,
+    file: UploadFile = File(..., description="Unemployment Claim PDF document"),
     output_dir: Optional[str] = None
 ):
     """
@@ -196,6 +231,17 @@ async def extract_claim_pdf_file(
         with open(temp_pdf_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
+        processed_by = request.headers.get("X-User-Email") or request.headers.get("x-user-email") or "SYSTEM"
+        
+        if _log_uni:
+            _log_uni(
+                module="Base Claim Extractor", action="extract",
+                status="STARTED",
+                processed_by=processed_by,
+                file_name=file.filename,
+                details="Starting PDF extraction"
+            )
+
         case_name = os.path.splitext(file.filename)[0]
         target_out_dir = output_dir or os.path.join("output", case_name)
 
@@ -205,9 +251,26 @@ async def extract_claim_pdf_file(
         result["excel_download_url"] = f"/api/download-excel/{case_name}"
         result["json_download_url"] = f"/api/download-json/{case_name}"
 
+        if _log_uni:
+            _log_uni(
+                module="Base Claim Extractor", action="extract",
+                status="SUCCESS",
+                processed_by=processed_by,
+                file_name=file.filename,
+                details="PDF claim document extracted successfully"
+            )
+
         return JSONResponse(content=result)
 
     except Exception as e:
+        if _log_uni:
+            _log_uni(
+                module="Base Claim Extractor", action="extract",
+                status="FAILED",
+                processed_by=processed_by,
+                file_name=file.filename or "unknown",
+                details=f"Error: {str(e)}"
+            )
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
