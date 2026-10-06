@@ -1,6 +1,16 @@
 import os
 import sys
+import time
+from pathlib import Path
 from rostaing_ocr import ocr_extractor
+
+try:
+    import core_gpu
+except ImportError:
+    _root_dir = Path(__file__).resolve().parent.parent
+    if str(_root_dir) not in sys.path:
+        sys.path.insert(0, str(_root_dir))
+    import core_gpu
 
 
 def extract_pdf_to_txt(pdf_path: str, output_txt_path: str = None) -> str:
@@ -23,7 +33,10 @@ def extract_pdf_to_txt(pdf_path: str, output_txt_path: str = None) -> str:
         output_txt_path = f"{base_name}_extracted.txt"
 
     print(f"Extracting text from '{pdf_path}'...")
+    t0 = time.time()
     ocr_extractor(pdf_path, output_file=output_txt_path)
+    elapsed = time.time() - t0
+    core_gpu.log_ocr_audit("Base-Claim", "rostaing-ocr", elapsed_sec=elapsed)
     print(f"Extraction complete! Text saved to '{output_txt_path}'.")
     return output_txt_path
 
